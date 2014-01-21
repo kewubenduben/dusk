@@ -6,6 +6,17 @@ require 'uri'
 
 module Dusk
   class Web < Sinatra::Base
+    def authorized?
+      @auth ||=  Rack::Auth::Basic::Request.new(request.env)
+      @auth.provided? && @auth.basic? && @auth.credentials
+    end
+
+    def protected!
+      unless authorized?
+        response['WWW-Authenticate'] = %(Basic realm="Restricted Area")
+        throw(:halt, [401, "Oops... we need your login name & password\n"])
+      end
+    end
 
     configure do
       enable :logging
@@ -28,6 +39,8 @@ module Dusk
         github_team_authenticate!(team)
       elsif organization = ENV['GITHUB_AUTH_ORGANIZATION']
         github_organization_authenticate!(organization)
+      else
+        protected!
       end
       session[:favorites] ||= []
     end
@@ -37,11 +50,27 @@ module Dusk
     end
 
     get '/metrics/find' do
-      RestClient.get("#{ENV['GRAPHITE_URL']}#{request.env['REQUEST_URI']}")
+      username, password = @auth.credentials
+      uri = URI("#{ENV['GRAPHITE_URL']}#{request.env['REQUEST_URI']}")
+      uri.user = username
+      uri.password = password
+      begin
+        RestClient.get(uri.to_s)
+      rescue
+        @auth = nil
+      end
     end
 
     get '/render/?' do
-      RestClient.get("#{ENV['GRAPHITE_URL']}#{request.env['REQUEST_URI']}")
+      username, password = @auth.credentials
+      uri = URI("#{ENV['GRAPHITE_URL']}#{request.env['REQUEST_URI']}")
+      uri.user = username
+      uri.password = password
+      begin
+        RestClient.get(uri.to_s)
+      rescue
+        @auth = nil
+      end
     end
 
     get %r{/metrics/(\S+)} do |metric|
@@ -68,4 +97,3 @@ module Dusk
     end
   end
 end
-
